@@ -19,6 +19,7 @@ Firmware/
 # Development only, not in the repository or a release: local tools, reference checkouts, .NET caches, builds of
 # development tools, release packages
 /dev-local/
+/dist/
 
 # A game folder's own (tools/setup.py), should one ever be made inside the source folder
 /game/
@@ -29,7 +30,7 @@ Firmware/
 /deps/
 /ultratears.cfg
 /UltraTears.exe
-/deploy-files.txt
+/setup-files.txt
 
 # Former development layout (kept ignored until removed)
 /work/

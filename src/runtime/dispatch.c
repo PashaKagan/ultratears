@@ -191,6 +191,7 @@ void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) {
 void rt_fatal_trace(void) {
     plat_print_backtrace();
     fflush(stderr);
+    plat_fatal_notice();
     abort();
 }
 

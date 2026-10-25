@@ -55,7 +55,7 @@ static _Atomic float device_volume = 1.0f;
 static unsigned audio_revision(const AudioRenderer *r) { unsigned byte=r->revision>>24;return byte>='0'?byte-'0':0; }
 static void report_once(Mixer *m, unsigned bit, const char *msg, int value) {
     if (m->reported & (1u << bit)) return;
-    m->reported |= 1u << bit; fprintf(stderr, "[totk-audio] 【红】%s (%d)\n", msg, value);
+    m->reported |= 1u << bit; fprintf(stderr, "[totk-audio] [warning] %s (%d)\n", msg, value);
 }
 
 /* Diagnostic recording is optional. The render thread only copies to pre-touched
@@ -100,7 +100,7 @@ static int prefill_blocks(void) {   // read once before the device starts (audio
     static int blocks = -2;
     if (blocks == -2) {
         const char *e = getenv("TOTK_AUDIO_PREFILL_MS"); int b = prefill_blocks_for(e);
-        if (b < 0) { fprintf(stderr, "[totk-audio] 【红】TOTK_AUDIO_PREFILL_MS=%s is not 0..500 ms: using 20\n", e); b = 4; }
+        if (b < 0) { fprintf(stderr, "[totk-audio] [warning] TOTK_AUDIO_PREFILL_MS=%s is not 0..500 ms: using 20\n", e); b = 4; }
         fprintf(stderr, "[totk-audio] output starts after %d ms of queued audio (TOTK_AUDIO_PREFILL_MS%s)\n", b * 5, e && *e ? "" : ", default");
         blocks = b;
     }
@@ -148,7 +148,7 @@ static void output_open(Mixer *m, int rate) {
     if (!SDL_WasInit(SDL_INIT_AUDIO)) { fprintf(stderr, "[totk-audio] no window (headless): mixing without an output device\n"); return; }
     SDL_AudioSpec spec = {SDL_AUDIO_F32, 2, rate};
     m->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, device_pull, m);
-    if (!m->stream) { fprintf(stderr, "[totk-audio] 【红】no output device (%s): mixing without sound\n", SDL_GetError()); return; }
+    if (!m->stream) { fprintf(stderr, "[totk-audio] [warning] no output device (%s): mixing without sound\n", SDL_GetError()); return; }
     m->unit_ok = 1;
     SDL_ResumeAudioStreamDevice(m->stream);
     fprintf(stderr, "[totk-audio] SDL3 output %d Hz stereo on \"%s\"\n", rate, SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(m->stream)));
@@ -542,7 +542,7 @@ static void mix_effects(AudioRenderer *r, int mix) {
         if(e->type==8) { mix_capture(r,mix,e);continue; }
         if(e->type==7) { mix_limiter(r,mix,id); continue; }
         if(e->type!=5) {
-            if(e->enabled && e->type<32 && !(m->effect_reported&(1u<<e->type))) { m->effect_reported|=1u<<e->type; fprintf(stderr,"[totk-audio] 【红】effect type %u not implemented\n",e->type); }
+            if(e->enabled && e->type<32 && !(m->effect_reported&(1u<<e->type))) { m->effect_reported|=1u<<e->type; fprintf(stderr,"[totk-audio] [warning] effect type %u not implemented\n",e->type); }
             continue;
         }
         Reverb3dParam *p=&s->param; float *input[6]={0},*output[6]={0};

@@ -161,7 +161,7 @@ static void require_cpu(void) {
 void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
     fflush(stderr);
-    char text[1024] = "LAS Recomp stopped because of an error.";
+    char text[1024] = "UltraTears stopped because of an error.";
     FILE *f = fopen(g_log_path, "rb");
     if (f) {
         static char tail[16384];
@@ -177,11 +177,11 @@ void plat_fatal_notice(void) {
         if (line) {
             char *end = strchr(line, '\n');
             if (end) *end = 0;
-            snprintf(text, sizeof text, "LAS Recomp stopped because of an error:\n\n%.600s", line);
+            snprintf(text, sizeof text, "UltraTears stopped because of an error:\n\n%.600s", line);
             if (strstr(line, "Vulkan") || strstr(line, "VK_") || strstr(line, "vk")) {
                 size_t l = strlen(text);
-                snprintf(text + l, sizeof text - l, "\n\nLAS Recomp needs a graphics driver with Vulkan 1.3: install the "
-                         "latest driver for your GPU (NVIDIA, AMD or Intel).");
+                snprintf(text + l, sizeof text - l, "\n\nUltraTears requires Vulkan 1.3 and VK_EXT_shader_object. "
+                         "Install the latest driver for your GPU. If the error remains, the GPU is not supported.");
             }
         }
     }

@@ -1,8 +1,10 @@
 """Build UltraTears from the player's own dump, in one command: every step is checked and can be resumed.
 
-usage: python tools/setup.py [--dump <folder with exefs\\ and romfs\\>] [--cpus N] [--only <step>]
-The dump is game\\ in this folder unless --dump names another (remembered for later runs); run it again to resume, or to
-rebuild what changed after an update of the port.
+From a Git checkout the build goes to dist\\, or to --output <folder>. The tracked source files are copied there and
+missing build tools are downloaded from the latest GitHub builder release. In a builder package setup runs in place.
+usage: python tools/setup.py [--output <build folder>] [--dump <folder with exefs\\ and romfs\\>] [--cpus N]
+The dump is game\\ in the checkout/build folder unless --dump names another (remembered for later runs); run it again
+to resume, or to rebuild what changed after an update of the port.
 The dump: the ExeFS and RomFS of The Legend of Zelda: Tears of the Kingdom with update 1.4.3 applied, as plain files,
 extracted by the player from their own console. Encrypted packages (.nsp, .xci, .nca, ...) are refused: the port
 decrypts nothing and reads no keys (README.md, Legal). Optional: <dump>\\sysdata\\fonts\\*.bfttf, the console's shared fonts.
@@ -17,7 +19,9 @@ Steps (data\\ holds everything made from the dump; it never leaves this PC):
   finish    ultratears.cfg
 """
 import argparse
+import filecmp
 import hashlib
+import importlib
 import json
 import os
 import pathlib
@@ -25,10 +29,14 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
+import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 import toolchain  # noqa: E402
+import public_tree  # noqa: E402
+import version  # noqa: E402
 
 DATA = ROOT / 'data'
 STATE = DATA / 'setup.json'
@@ -42,6 +50,10 @@ ROMFS_FILES = 304243
 ROMFS_BYTES = 17026725026
 ROMFS_CONTENT = 'b2a2e966a06158e098c03e564f77fd72809bc57275f04eb0725bcde14d522056'
 ENCRYPTED = ('.nsp', '.nsz', '.xci', '.xcz', '.nca', '.ncz')
+GITHUB_RELEASES = 'https://api.github.com/repos/kuraeow/ultratears/releases?per_page=20'
+KEEP = {'game', 'data', 'build', 'userdata', 'diag', 'deps', 'dist', 'dev-local'}
+OUTPUT_OWN = {'setup.bat', 'VERSION.txt', 'THIRD-PARTY-NOTICES.md', 'licenses', 'ultratears.cfg', 'UltraTears.exe',
+              'UltraTears.pdb', 'setup-files.txt'}
 
 
 class Fail(Exception):
@@ -50,6 +62,174 @@ class Fail(Exception):
 
 def say(msg):
     print(msg, flush=True)
+
+
+def is_checkout():
+    r = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
+    return r.returncode == 0 and pathlib.Path(r.stdout.strip()).resolve() == ROOT
+
+
+def source_files():
+    out = subprocess.run(['git', '-C', str(ROOT), 'ls-files', '-z'], check=True, capture_output=True).stdout
+    files = [f for f in out.decode('utf-8').split('\0') if f]
+    return [f for f in files if f.split('/')[0] not in public_tree.PRIVATE and (ROOT / f).is_file()]
+
+
+def sync_source(home):
+    """Copy tracked files, including uncommitted edits, while preserving the build folder's own files."""
+    if home == ROOT:
+        return 0, 0
+    home.mkdir(parents=True, exist_ok=True)
+    files = source_files()
+    if any(f.split('/')[0] in KEEP for f in files):
+        raise Fail('a tracked path would overwrite the build folder\'s own data: refusing')
+    changed = 0
+    for f in files:
+        src, dst = ROOT / f, home / f
+        if dst.is_file() and filecmp.cmp(src, dst, shallow=False):
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        changed += 1
+    listing = home / 'setup-files.txt'
+    old = set(listing.read_text(encoding='utf-8').splitlines()) if listing.is_file() else set()
+    removed = 0
+    for f in sorted(old - set(files)):
+        p = home / f
+        if f.split('/')[0] not in KEEP | OUTPUT_OWN and p.is_file():
+            p.unlink()
+            removed += 1
+            for d in p.parents:
+                if d == home or any(d.iterdir()):
+                    break
+                d.rmdir()
+    listing.write_text('\n'.join(files) + '\n', encoding='utf-8')
+    v, commit = version.current()
+    (home / 'VERSION.txt').write_text(version.version_txt(v, commit), encoding='utf-8')
+    return changed, removed
+
+
+def deps_ready(home):
+    py = home / 'deps/python/python.exe'
+    programs = (py, home / 'deps/clang64/bin/clang.exe', home / 'deps/clang64/bin/clang++.exe',
+                home / 'deps/clang64/bin/lld.exe', home / 'deps/clang64/bin/ninja.exe',
+                home / 'deps/shaders/ultrs-shaders.exe')
+    if not all(p.is_file() for p in programs):
+        return False
+    packages = subprocess.run([str(py), '-c', 'import lz4, capstone, unicorn'], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, env=dict(os.environ, PYTHONNOUSERSITE='1'))
+    return packages.returncode == 0
+
+
+def builder_asset():
+    request = urllib.request.Request(GITHUB_RELEASES, headers={'Accept': 'application/vnd.github+json',
+                                                               'User-Agent': 'UltraTears-setup'})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            releases = json.load(response)
+    except Exception as e:
+        raise Fail(f'could not query GitHub releases for the build tools: {e}') from e
+    for release in releases:
+        for asset in release.get('assets', []):
+            name = asset.get('name', '')
+            if name.startswith('UltraTears-builder-') and name.endswith('-windows-x86_64.zip'):
+                return name, asset['browser_download_url']
+    raise Fail('no UltraTears builder package was found in the GitHub releases')
+
+
+def download(url, path):
+    request = urllib.request.Request(url, headers={'User-Agent': 'UltraTears-setup'})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, open(path, 'wb') as out:
+            total = int(response.headers.get('Content-Length', 0))
+            done, shown = 0, -1
+            while True:
+                block = response.read(1 << 20)
+                if not block:
+                    break
+                out.write(block)
+                done += len(block)
+                mark = done // (64 << 20)
+                if mark != shown:
+                    shown = mark
+                    suffix = f' / {total / 2**20:.0f} MiB' if total else ''
+                    say(f'  downloading tools: {done / 2**20:.0f} MiB{suffix}')
+    except Exception as e:
+        path.unlink(missing_ok=True)
+        raise Fail(f'could not download the build tools: {e}') from e
+
+
+def install_deps(home):
+    if deps_ready(home):
+        return
+    name, url = builder_asset()
+    cache = ROOT / 'dev-local/downloads'
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / name
+    if not archive.is_file():
+        say(f'Build tools are missing; downloading {name} once.')
+        partial = archive.with_suffix(archive.suffix + '.part')
+        download(url, partial)
+        partial.replace(archive)
+    say(f'  installing tools in {home / "deps"}')
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            for info in zf.infolist():
+                parts = pathlib.PurePosixPath(info.filename).parts
+                indexes = [i for i, p in enumerate(parts) if p in ('deps', 'licenses')]
+                if not indexes:
+                    continue
+                rel = pathlib.Path(*parts[indexes[0]:])
+                if '..' in rel.parts:
+                    raise Fail(f'unsafe path in the builder archive: {info.filename}')
+                dst = home / rel
+                if info.is_dir():
+                    dst.mkdir(parents=True, exist_ok=True)
+                else:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        with zf.open(info) as src, open(dst, 'wb') as out:
+                            shutil.copyfileobj(src, out)
+                    except PermissionError:
+                        # An in-place repair may be running with deps/python/python.exe, whose EXE/DLLs Windows locks.
+                        if not dst.is_file():
+                            raise
+    except (OSError, zipfile.BadZipFile) as e:
+        archive.unlink(missing_ok=True)
+        raise Fail(f'could not unpack the build tools: {e}') from e
+    if not deps_ready(home):
+        raise Fail(f'{name} did not contain all required build tools')
+
+
+def choose_dump(home, requested):
+    if requested:
+        return requested.resolve()
+    for candidate in (home / 'game', ROOT / 'game'):
+        if (candidate / 'exefs').is_dir() or (candidate / 'romfs').is_dir():
+            return candidate.resolve()
+    return (home / 'game').resolve()
+
+
+def build_from_checkout(a):
+    home = (a.output or ROOT / 'dist').resolve()
+    try:
+        changed, removed = sync_source(home)
+        say(f'UltraTears source -> {home}: {changed} files updated, {removed} removed')
+        install_deps(home)
+        local_xlate = ROOT / 'dev-local/build/shaders/ultrs-shaders.exe'
+        target_xlate = home / 'deps/shaders/ultrs-shaders.exe'
+        if local_xlate.is_file() and not filecmp.cmp(local_xlate, target_xlate, shallow=False):
+            target_xlate.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_xlate, target_xlate)
+            say('  installed the locally built shader translator')
+    except Fail as e:
+        say(f'\nERROR preparing the build folder: {e}')
+        return 1
+    cmd = [str(home / 'deps/python/python.exe'), str(home / 'tools/setup.py'), '--in-place', '--cpus', str(a.cpus),
+           '--dump', str(choose_dump(home, a.dump))]
+    if a.only:
+        cmd += ['--only', a.only]
+    return subprocess.run(cmd, cwd=home, env=dict(os.environ, PYTHONNOUSERSITE='1')).returncode
 
 
 def sha256(path):
@@ -216,12 +396,26 @@ STEPS = [('check', step_check), ('romfs', step_romfs), ('lift', step_lift), ('co
 
 def main():
     ap = argparse.ArgumentParser(description='Build UltraTears from your own dump of the game.')
+    ap.add_argument('--output', type=pathlib.Path,
+                    help='build folder when run from a Git checkout (default: dist here)')
     ap.add_argument('--dump', type=pathlib.Path,
                     help='the folder with exefs\\ and romfs\\ (default: game\\ here; remembered for later runs)')
     ap.add_argument('--cpus', type=int, default=os.cpu_count() or 4,
                     help='logical CPUs the build may use (default: all; it runs at low priority)')
     ap.add_argument('--only', choices=[s for s, _ in STEPS], help='run one step only')
+    ap.add_argument('--in-place', action='store_true', help=argparse.SUPPRESS)
     a = ap.parse_args()
+    if is_checkout() and not a.in_place:
+        sys.exit(build_from_checkout(a))
+    if a.output:
+        ap.error('--output is used only when setup.py is run from a Git checkout')
+    if not deps_ready(ROOT):
+        try:
+            install_deps(ROOT)
+        except Fail as e:
+            say(f'\nERROR preparing the build tools: {e}')
+            sys.exit(1)
+        importlib.reload(toolchain)
     state = load_state()
     if a.dump:
         state['dump'] = str(a.dump.resolve())

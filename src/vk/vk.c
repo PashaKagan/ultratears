@@ -52,7 +52,7 @@ static int create_instance(SDL_Window *window) {
     const char *v = getenv("TOTK_VK_VALIDATION");
     int validate = v && strcmp(v, "0") && has_layer(layer);
     if (v && strcmp(v, "0") && !validate) LOG("TOTK_VK_VALIDATION: %s not installed", layer);
-    VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "totk-pc-port",
+    VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "UltraTears",
                              .apiVersion = VK_API_VERSION_1_3};
     VkInstanceCreateInfo ci = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app,
                                .enabledExtensionCount = next, .ppEnabledExtensionNames = exts,
@@ -195,6 +195,11 @@ static int create_device(void) {
     }
     free(ex.e);
     vk.vkGetPhysicalDeviceFeatures2(vkc.gpu, &f2);
+    vkc.has_shader_object = vkc.has_shader_object && fso.shaderObject;
+    if (!vkc.has_shader_object) {
+        LOG("VK_EXT_shader_object is required but is not supported by this GPU or driver");
+        return 0;
+    }
     vkc.has_feedback_loop = has_fl && has_fld && ffl.attachmentFeedbackLoopLayout && ffld.attachmentFeedbackLoopDynamicState;
     if (!vkc.has_feedback_loop) LOG("no attachment feedback loops: textures that are attachments of their pass read empty");
     vkc.has_local_read = has_lr && flr.dynamicRenderingLocalRead;

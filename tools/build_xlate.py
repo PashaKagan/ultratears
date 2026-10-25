@@ -1,6 +1,6 @@
 """Build the shader translator ultrs-shaders (MacNativeGames' totk_xlate service around the Ryujinx 1.3.2 shader
 translator in third_party/maxwell_shader, both MIT) as one self-contained Windows program: build/shaders/ultrs-shaders.exe, which needs no .NET
-installed to run (dev-local/build/shaders; tools/deploy.py and tools/make_package.py take it from there). It turns the game's Switch GPU shaders (Maxwell machine code) into SPIR-V for Vulkan.
+installed to run (dev-local/build/shaders; tools/setup.py and tools/make_package.py take it from there). It turns the game's Switch GPU shaders (Maxwell machine code) into SPIR-V for Vulkan.
 
 usage: python tools/build_xlate.py [--dotnet dotnet]
 Sources: third_party/shader_translator (the service; its patches/ are already applied to the copy in third_party/maxwell_shader,

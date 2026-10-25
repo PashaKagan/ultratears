@@ -2,7 +2,7 @@
 
 usage: python tools/make_package.py [--home ../release-test] [--python <Python 3.14>] [--no-zip]
 The version is the tag v<x.y.z> on HEAD (tools/version.py): tag the release commit first.
-Run on the developer's machine after a complete build in the game folder --home (tools/deploy.py: its build/build.ninja
+Run on the developer's machine after a complete build in the game folder --home (tools/setup.py --output: its build/build.ninja
 and objects tell which parts of clang64 the build reads) and tools/build_xlate.py (dev-local/build/shaders):
   - the source: the public tree of HEAD (tools/public_tree.py: what git tracks, without the internal notes), so nothing
     made from the game can slip in;
@@ -191,7 +191,7 @@ def main():
     home, xlate = a.home.resolve(), ROOT / 'dev-local/build/shaders/ultrs-shaders.exe'
     for need in (home / 'UltraTears.exe', home / 'build/build.ninja', xlate):
         if not need.is_file():
-            sys.exit(f'{need} is missing: build first (tools/deploy.py, tools/build_xlate.py)')
+            sys.exit(f'{need} is missing: build first (tools/setup.py --output, tools/build_xlate.py)')
     name = f'UltraTears-builder-{a.version}-windows-x86_64'
     out = ROOT / 'dev-local/dist' / name
     if out.exists():

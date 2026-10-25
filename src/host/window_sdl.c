@@ -94,7 +94,8 @@ int window_init(void) {
     pad_lock = SDL_CreateMutex();
     window = SDL_CreateWindow("UltraTears", 1280, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window) { fprintf(stderr, "[totk] window: %s\n", SDL_GetError()); return 0; }
-    if (!vkp_init(window)) fprintf(stderr, "[totk] no Vulkan presentation: the game runs without a picture\n");
+    if (!vkp_init(window))
+        runtime_fail("Vulkan initialization failed (Vulkan 1.3 with VK_EXT_shader_object is required)");
     return 1;
 }
 
@@ -167,7 +168,7 @@ static void title_update(void) {
     if (now - t0 < 500000000) return;
     double s = (now - t0) / 1e9;
     char title[128];
-    snprintf(title, sizeof title, "totk-pc-port  |  game %.1f fps  |  shown %.1f fps", (game - game0) / s, (shown - shown0) / s);
+    snprintf(title, sizeof title, "UltraTears  |  game %.1f fps  |  shown %.1f fps", (game - game0) / s, (shown - shown0) / s);
     SDL_SetWindowTitle(window, title);
     t0 = now; game0 = game; shown0 = shown;
 }
